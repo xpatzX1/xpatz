@@ -64,9 +64,10 @@ jobs:
         if: ${{ inputs.iconUrl != '' }}
         run: |
           mkdir -p /tmp/icon
-          EXT="${{ inputs.iconUrl##*. }}"
+          ICON_URL="${{ inputs.iconUrl }}"
+          EXT="${ICON_URL##*.}"
           ICON_TMP="/tmp/icon/icon.$EXT"
-          curl -L "${{ inputs.iconUrl }}" -o "$ICON_TMP"
+          curl -L "$ICON_URL" -o "$ICON_TMP"
 
           sudo apt-get update
           sudo apt-get install -y imagemagick webp
