@@ -78,7 +78,12 @@ jobs:
           )
 
           for name in "${!icons[@]}"; do
-            for dir in "$ANDROID_DIR"/app/src/main/res/mipmap-*; do
+            for dir in "$ANDROID_DIR"/app/src/main/res/mipmap-*/; do
+              FILE=$(basename "$dir")
+ 
+              if [[ "$FILE" == *"v26"* ]]; then
+                continue
+              fi
               TARGET="$dir/${icons[$name]}"
               if [ -f "$TARGET" ] || [[ "$name" == "ic_launcher" ]]; then
                 convert "$ICON_TMP" -resize 192x192 "$TARGET"
