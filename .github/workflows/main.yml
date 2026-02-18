@@ -72,8 +72,8 @@ jobs:
           sudo apt-get install -y imagemagick webp
 
           declare -A icons=(
-            ["ic_launcher"]="ic_launcher.webp" 
-            ["ic_launcher_round"]="ic_launcher_round.webp" 
+            ["ic_launcher"]="ic_launcher.webp"
+            ["ic_launcher_round"]="ic_launcher_round.webp"
           )
 
           for name in "${!icons[@]}"; do
