@@ -47,7 +47,7 @@ jobs:
             exit 1
           fi
           sed -i "s|<string name=\"app_name\">.*</string>|<string name=\"app_name\">${{ inputs.appName }}</string>|" "$STRINGS"
- 
+
       - name: Inject App URL
         run: |
           FILE=$(find "$ANDROID_DIR" -name MainActivity.kt | head -n 1)
@@ -56,15 +56,15 @@ jobs:
             exit 1
           fi
           sed -i "s|%%APP_URL%%|${{ inputs.appUrl }}|g" "$FILE"
-          
+
       - name: Download Icon
-        if: inputs.iconUrl != ''
+        if: ${{ inputs.iconUrl != '' }}
         run: |
           mkdir -p /tmp/icon
           curl -L "${{ inputs.iconUrl }}" -o /tmp/icon/icon.png
 
       - name: Replace App Icon
-        if: inputs.iconUrl != ''
+        if: ${{ inputs.iconUrl != '' }}
         run: |
           sudo apt-get update
           sudo apt-get install -y imagemagick
@@ -84,16 +84,16 @@ jobs:
               convert /tmp/icon/icon.png -resize ${size}x${size} "$TARGET"
             fi
           done
- 
-         - name: Convert WebP to PNG for build
-  run: |
-    for dir in "$ANDROID_DIR"/app/src/main/res/mipmap-*; do
-      for f in "$dir"/*.webp; do
-        [ -f "$f" ] || continue
-        convert "$f" "${f%.webp}.png"
-      done
-    done
- 
+
+      - name: Convert WebP to PNG for build
+        run: |
+          for dir in "$ANDROID_DIR"/app/src/main/res/mipmap-*; do
+            for f in "$dir"/*.webp; do
+              [ -f "$f" ] || continue
+              convert "$f" "${f%.webp}.png"
+            done
+          done
+
       - name: Build APK
         run: |
           cd "$ANDROID_DIR"
@@ -104,5 +104,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: apk
-          path: |
-            **/build/outputs/apk/debug/*.apk
+          path: "**/build/outputs/apk/debug/*.apk"
