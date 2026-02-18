@@ -85,6 +85,15 @@ jobs:
             fi
           done
  
+         - name: Convert WebP to PNG for build
+  run: |
+    for dir in "$ANDROID_DIR"/app/src/main/res/mipmap-*; do
+      for f in "$dir"/*.webp; do
+        [ -f "$f" ] || continue
+        convert "$f" "${f%.webp}.png"
+      done
+    done
+ 
       - name: Build APK
         run: |
           cd "$ANDROID_DIR"
