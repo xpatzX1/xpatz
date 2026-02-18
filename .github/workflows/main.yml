@@ -5,10 +5,13 @@ on:
     inputs:
       appName:
         required: true
+        type: string
       appUrl:
         required: true
+        type: string
       iconUrl:
         required: false
+        type: string
 
 jobs:
   build:
@@ -29,8 +32,15 @@ jobs:
 
       - name: Inject App URL
         run: |
-          FILE=$(find app/src/main/java -name MainActivity.kt | head -n 1)
-          sed -i "s|%%APP_URL%%|${{ inputs.appUrl }}|g" "$FILE"
+          FILE=$(find . -name MainActivity.kt | head -n 1)
+          echo "Found MainActivity at: $FILE"
+
+          if [ -z "$FILE" ]; then
+            echo "MainActivity.kt NOT FOUND"
+            exit 1
+          fi
+
+          sed -i "s|%APP_URL%|${{ inputs.appUrl }}|g" "$FILE"
 
       - name: Download Icon
         if: inputs.iconUrl != ''
@@ -41,7 +51,9 @@ jobs:
       - name: Resize & Replace Icon
         if: inputs.iconUrl != ''
         run: |
-          sudo apt install -y imagemagick
+          sudo apt-get update
+          sudo apt-get install -y imagemagick
+
           declare -A icons=(
             ["mipmap-mdpi"]=48
             ["mipmap-hdpi"]=72
@@ -50,19 +62,29 @@ jobs:
             ["mipmap-xxxhdpi"]=192
           )
 
+          RES_DIR=$(find . -path "*/src/main/res" | head -n 1)
+
+          if [ -z "$RES_DIR" ]; then
+            echo "res directory NOT FOUND"
+            exit 1
+          fi
+
           for dir in "${!icons[@]}"; do
             size=${icons[$dir]}
+            mkdir -p "$RES_DIR/$dir"
             convert /tmp/icon/icon.png -resize ${size}x${size} \
-              app/src/main/res/$dir/ic_launcher.png
+              "$RES_DIR/$dir/ic_launcher.png"
           done
 
+      - name: Grant Gradle Permission
+        run: chmod +x ./gradlew
+
       - name: Build APK
-        run: |
-          chmod +x gradlew
-          ./gradlew assembleDebug
+        run: ./gradlew assembleDebug --stacktrace
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: apk
-          path: app/build/outputs/apk/debug/*.apk
+          path: |
+            **/build/outputs/apk/debug/*.apk
