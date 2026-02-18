@@ -7,6 +7,8 @@ on:
         required: true
       appUrl:
         required: true
+      iconUrl:
+        required: false
 
 jobs:
   build:
@@ -25,10 +27,34 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Inject URL
+      - name: Inject App URL
         run: |
-          sed -i "s|%%APP_URL%%|${{ inputs.appUrl }}|g" \
-          app/src/main/java/**/MainActivity.kt
+          FILE=$(find app/src/main/java -name MainActivity.kt | head -n 1)
+          sed -i "s|%%APP_URL%%|${{ inputs.appUrl }}|g" "$FILE"
+
+      - name: Download Icon
+        if: inputs.iconUrl != ''
+        run: |
+          mkdir -p /tmp/icon
+          curl -L "${{ inputs.iconUrl }}" -o /tmp/icon/icon.png
+
+      - name: Resize & Replace Icon
+        if: inputs.iconUrl != ''
+        run: |
+          sudo apt install -y imagemagick
+          declare -A icons=(
+            ["mipmap-mdpi"]=48
+            ["mipmap-hdpi"]=72
+            ["mipmap-xhdpi"]=96
+            ["mipmap-xxhdpi"]=144
+            ["mipmap-xxxhdpi"]=192
+          )
+
+          for dir in "${!icons[@]}"; do
+            size=${icons[$dir]}
+            convert /tmp/icon/icon.png -resize ${size}x${size} \
+              app/src/main/res/$dir/ic_launcher.png
+          done
 
       - name: Build APK
         run: |
