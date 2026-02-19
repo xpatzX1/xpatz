@@ -51,7 +51,7 @@ jobs:
           FILE=$(find "$ANDROID_DIR" -name MainActivity.kt | head -n 1)
           sed -i "s|%%APP_URL%%|${{ inputs.appUrl }}|g" "$FILE"
 
-      - name: Download & Replace App Icon
+      - name: Download & Replace App Icon (Adaptive)
         if: ${{ inputs.iconUrl != '' }}
         run: |
           mkdir -p /tmp/icon
@@ -62,14 +62,19 @@ jobs:
 
           sudo apt-get update
           sudo apt-get install -y imagemagick webp
+
+          mkdir -p "$ANDROID_DIR/app/src/main/res/drawable"
           
+          convert "$ICON_TMP" -resize 192x192 "$ANDROID_DIR/app/src/main/res/drawable/ic_launcher_foreground.png"
+          convert "$ICON_TMP" -resize 192x192 "$ANDROID_DIR/app/src/main/res/drawable/ic_launcher_background.png"
+
           for dir in "$ANDROID_DIR"/app/src/main/res/mipmap-*/; do
             FILE=$(basename "$dir")
             if [[ "$FILE" == *"v26"* ]]; then
               continue
             fi
-            convert "$ICON_TMP" -resize 192x192 "$dir/ic_launcher.webp"
-            convert "$ICON_TMP" -resize 192x192 "$dir/ic_launcher_round.webp"
+            cp "$ANDROID_DIR/app/src/main/res/drawable/ic_launcher_foreground.png" "$dir/ic_launcher.webp"
+            cp "$ANDROID_DIR/app/src/main/res/drawable/ic_launcher_background.png" "$dir/ic_launcher_round.webp"
           done
 
       - name: Build APK
