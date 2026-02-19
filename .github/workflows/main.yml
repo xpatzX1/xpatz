@@ -76,8 +76,10 @@ jobs:
             TARGET_DIR="$ANDROID_DIR/app/src/main/res/$dir"
             mkdir -p "$TARGET_DIR"
 
+            # Kotak
             convert "$ICON_TMP" -resize "${SIZE}x${SIZE}" "$TARGET_DIR/ic_launcher.webp"
 
+            # Lingkaran
             convert "$ICON_TMP" -resize "${SIZE}x${SIZE}" \
               -alpha set -background none \
               \( -size ${SIZE}x${SIZE} xc:none -fill white -draw "circle $((SIZE/2)),$((SIZE/2)) $((SIZE/2)),$((SIZE-1))" \) \
@@ -85,29 +87,27 @@ jobs:
               "$TARGET_DIR/ic_launcher_round.webp"
           done
 
+          # Fallback mipmap (untuk launcher lama)
           FALLBACK_DIR="$ANDROID_DIR/app/src/main/res/mipmap"
           mkdir -p "$FALLBACK_DIR"
           cp "$ANDROID_DIR/app/src/main/res/mipmap-xxxhdpi/ic_launcher.webp" "$FALLBACK_DIR/ic_launcher.webp"
           cp "$ANDROID_DIR/app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.webp" "$FALLBACK_DIR/ic_launcher_round.webp"
 
+          # Adaptive XML (launcher modern)
           ADAPTIVE_XML_DIR="$ANDROID_DIR/app/src/main/res/mipmap-anydpi-v26"
           mkdir -p "$ADAPTIVE_XML_DIR"
 
-          cat > "$ADAPTIVE_XML_DIR/ic_launcher.xml" <<'EOF'
-<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+          echo '<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
     <background android:drawable="@mipmap/ic_launcher"/>
     <foreground android:drawable="@mipmap/ic_launcher_foreground"/>
     <monochrome android:drawable="@mipmap/ic_launcher_foreground"/>
-</adaptive-icon>
-EOF
+</adaptive-icon>' > "$ADAPTIVE_XML_DIR/ic_launcher.xml"
 
-          cat > "$ADAPTIVE_XML_DIR/ic_launcher_round.xml" <<'EOF'
-<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+          echo '<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
     <background android:drawable="@mipmap/ic_launcher"/>
     <foreground android:drawable="@mipmap/ic_launcher_round"/>
     <monochrome android:drawable="@mipmap/ic_launcher_round"/>
-</adaptive-icon>
-EOF
+</adaptive-icon>' > "$ADAPTIVE_XML_DIR/ic_launcher_round.xml"
 
       - name: Build APK
         run: |
@@ -119,7 +119,7 @@ EOF
         uses: actions/upload-artifact@v4
         with:
           name: apk
-          path: "AndroidWebviewTemplate/app/build/outputs/apk/debug/*-debug*.apk"
+          path: "$ANDROID_DIR/app/build/outputs/apk/debug/*-debug*.apk"
 
       - name: List APKs
         run: ls -la "$ANDROID_DIR/app/build/outputs/apk/debug/"
