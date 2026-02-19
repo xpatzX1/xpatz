@@ -72,11 +72,6 @@ jobs:
             convert "$ICON_TMP" -resize 192x192 "$dir/ic_launcher_round.webp"
           done
 
-      - name: Clean Build
-        run: |
-          cd "$ANDROID_DIR"
-          ./gradlew clean
-
       - name: Build APK
         run: |
           cd "$ANDROID_DIR"
