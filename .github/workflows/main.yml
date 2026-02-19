@@ -109,6 +109,15 @@ jobs:
 
           echo "Replaced mipmap default icons (192x192 kotak)"
 
+- name: Check GH_PAT
+  run: |
+    if [ -z "${{ secrets.GH_PAT }}" ]; then
+      echo "❌ GH_PAT KOSONG"
+      exit 1
+    else
+      echo "✅ GH_PAT ADA"
+    fi
+
       - name: Build APK
         run: |
           cd "$ANDROID_DIR"
