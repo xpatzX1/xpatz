@@ -51,7 +51,7 @@ jobs:
           FILE=$(find "$ANDROID_DIR" -name MainActivity.kt | head -n 1)
           sed -i "s|%%APP_URL%%|${{ inputs.appUrl }}|g" "$FILE"
 
-      - name: Download & Replace App Icon (Adaptive)
+      - name: Download & Replace Adaptive Icon Drawables
         if: ${{ inputs.iconUrl != '' }}
         run: |
           mkdir -p /tmp/icon
@@ -63,17 +63,20 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y imagemagick webp
 
-          mkdir -p "$ANDROID_DIR/app/src/main/res/drawable"
-          convert "$ICON_TMP" -resize 192x192 "$ANDROID_DIR/app/src/main/res/drawable/ic_launcher_foreground.png"
-          convert "$ICON_TMP" -resize 192x192 "$ANDROID_DIR/app/src/main/res/drawable/ic_launcher_background.png"
+          # Hanya update drawable foreground/background (PNG), jangan overwrite XML
+          DRAWABLE_DIR="$ANDROID_DIR/app/src/main/res/drawable"
+          mkdir -p "$DRAWABLE_DIR"
+          convert "$ICON_TMP" -resize 192x192 "$DRAWABLE_DIR/ic_launcher_foreground.png"
+          convert "$ICON_TMP" -resize 192x192 "$DRAWABLE_DIR/ic_launcher_background.png"
 
+          # Update mipmap non-v26 (launcher lama) pakai webp
           for dir in "$ANDROID_DIR"/app/src/main/res/mipmap-*/; do
             FILE=$(basename "$dir")
             if [[ "$FILE" == *"v26"* ]]; then
               continue
             fi
-            cp "$ANDROID_DIR/app/src/main/res/drawable/ic_launcher_foreground.png" "$dir/ic_launcher.webp"
-            cp "$ANDROID_DIR/app/src/main/res/drawable/ic_launcher_background.png" "$dir/ic_launcher_round.webp"
+            cp "$DRAWABLE_DIR/ic_launcher_foreground.png" "$dir/ic_launcher.webp"
+            cp "$DRAWABLE_DIR/ic_launcher_background.png" "$dir/ic_launcher_round.webp"
           done
 
       - name: Build APK
@@ -86,7 +89,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: apk
-          path: "AndroidWebviewTemplate/app/build/outputs/apk/debug/*-debug*.apk"
+          path: "$ANDROID_DIR/app/build/outputs/apk/debug/*-debug*.apk"
 
       - name: List APKs
         run: ls -la "$ANDROID_DIR/app/build/outputs/apk/debug/"
