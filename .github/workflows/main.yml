@@ -51,7 +51,7 @@ jobs:
           FILE=$(find "$ANDROID_DIR" -name MainActivity.kt | head -n 1)
           sed -i "s|%%APP_URL%%|${{ inputs.appUrl }}|g" "$FILE"
 
-      - name: Download & Replace Adaptive Icon Foreground
+      - name: Download & Replace App Icon (Adaptive)
         if: ${{ inputs.iconUrl != '' }}
         run: |
           mkdir -p /tmp/icon
@@ -63,19 +63,31 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y imagemagick webp
 
-          DRAWABLE_DIR="$ANDROID_DIR/app/src/main/res/drawable"
-          mkdir -p "$DRAWABLE_DIR"
+          # Ukuran mipmap sesuai Android
+          declare -A sizes=( 
+            ["mipmap-mdpi"]=48 
+            ["mipmap-hdpi"]=72 
+            ["mipmap-xhdpi"]=96 
+            ["mipmap-xxhdpi"]=144 
+            ["mipmap-xxxhdpi"]=192 
+          )
 
-          # Hanya replace foreground PNG (tidak menimpa background XML)
-          convert "$ICON_TMP" -resize 192x192 "$DRAWABLE_DIR/ic_launcher_foreground.png"
-
-          # Update mipmap non-v26 untuk launcher lama
-          for dir in "$ANDROID_DIR"/app/src/main/res/mipmap-*/; do
-            FILE=$(basename "$dir")
-            if [[ "$FILE" == *"v26"* ]]; then
+          for dir in "$ANDROID_DIR"/app/src/main/res/mipmap-*; do
+            NAME=$(basename "$dir")
+            SIZE=${sizes[$NAME]}
+            if [ -z "$SIZE" ]; then
               continue
             fi
-            cp "$DRAWABLE_DIR/ic_launcher_foreground.png" "$dir/ic_launcher.webp"
+
+            # Kotak
+            convert "$ICON_TMP" -resize "${SIZE}x${SIZE}" "$dir/ic_launcher.webp"
+
+            # Lingkaran (crop + transparan)
+            convert "$ICON_TMP" -resize "${SIZE}x${SIZE}" -alpha set -background none \
+              -gravity center -extent "${SIZE}x${SIZE}" \
+              \( +clone -threshold -1 -fill white -draw "circle $((SIZE/2)),$((SIZE/2)) $((SIZE/2)),$((SIZE-1))" \) \
+              -compose DstIn -composite \
+              "$dir/ic_launcher_round.webp"
           done
 
       - name: Build APK
