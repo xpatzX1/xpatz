@@ -1,4 +1,4 @@
-name: Build APK and Push Result
+name: Build & Upload APK
 
 on:
   workflow_dispatch:
@@ -78,7 +78,7 @@ jobs:
             SIZE=${sizes[$dir]}
             TARGET_DIR="$ANDROID_DIR/app/src/main/res/$dir"
             mkdir -p "$TARGET_DIR"
-            
+          
             convert "$ICON_TMP" -resize "${SIZE}x${SIZE}" "$TARGET_DIR/ic_launcher.webp"
 
             convert "$ICON_TMP" -resize "${SIZE}x${SIZE}" \
@@ -93,16 +93,21 @@ jobs:
         run: |
           MIPMAP_DIR="$ANDROID_DIR/app/src/main/res/mipmap"
           mkdir -p "$MIPMAP_DIR"
-
+          
           if [ "${{ inputs.iconUrl }}" != "" ]; then
             curl -L "${{ inputs.iconUrl }}" -o /tmp/ic_launcher_foreground.png
             convert /tmp/ic_launcher_foreground.png -resize 192x192\! "$MIPMAP_DIR/ic_launcher_foreground.png"
           fi
-
+          
           if [ "${{ inputs.backgroundUrl }}" != "" ]; then
             curl -L "${{ inputs.backgroundUrl }}" -o /tmp/ic_launcher_background.png
             convert /tmp/ic_launcher_background.png -resize 192x192\! "$MIPMAP_DIR/ic_launcher_background.png"
+          else
+            # Kosongin background biar icon foreground kelihatan
+            convert -size 192x192 xc:none "$MIPMAP_DIR/ic_launcher_background.png"
           fi
+
+          echo "Replaced mipmap default icons (192x192 kotak)"
 
       - name: Build APK
         run: |
@@ -110,25 +115,29 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleDebug --stacktrace
 
-      - name: Zip APK result
+      - name: Zip APK Result
         run: |
           mkdir -p /tmp/build_result
-          cp "$ANDROID_DIR/app/build/outputs/apk/debug/"*-debug*.apk /tmp/build_result/
+          cp "$ANDROID_DIR/app/build/outputs/apk/debug/"*-debug*.apk /tmp/build_result/app_result.apk
           cd /tmp/build_result
-          zip -r app_result.zip *
+          zip -r app_result.zip app_result.apk
 
-      - name: Push APK zip to repo X folder
+      - name: Push APK to Repo X Folder
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
         run: |
-          git config --global user.name "GitHub Actions"
-          git config --global user.email "actions@github.com"
-          git clone https://x-access-token:${GH_PAT}@github.com/Joodev65/Joomodss.id.git repo_push
+          git clone https://github.com/Joodev65/Joomodss.id.git repo_push
+          mkdir -p repo_push/X
           cp /tmp/build_result/app_result.zip repo_push/X/
           cd repo_push
+          git config user.name "GitHub Actions Bot"
+          git config user.email "actions@github.com"
+
+          git remote set-url origin https://x-access-token:${GH_PAT}@github.com/Joodev65/Joomodss.id.git
+
           git add X/app_result.zip
-          git commit -m "Add new APK result from workflow"
-          git push
+          git commit -m "Add new APK result from workflow" || echo "No changes to commit"
+          git push origin main
 
       - name: List APKs
         run: ls -la "$ANDROID_DIR/app/build/outputs/apk/debug/"
