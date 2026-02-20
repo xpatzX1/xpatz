@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       zipUrl:
-        description: 'URL file ZIP Flutter project'
+        description: 'URL ZIP Flutter project'
         required: true
       jobId:
         description: 'ID unik job untuk tracking'
@@ -15,46 +15,56 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repo
+      - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: '3.13.0-stable'
+      - name: Install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unzip curl git xz-utils
 
-      - name: Download ZIP
+      - name: Install Flutter 3.41.0
+        run: |
+          FLUTTER_VERSION="3.41.0-stable"
+          curl -L "https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_${FLUTTER_VERSION}.tar.xz" -o /tmp/flutter.tar.xz
+          mkdir -p $HOME/flutter
+          tar xf /tmp/flutter.tar.xz -C $HOME/flutter
+          export PATH="$HOME/flutter/flutter/bin:$PATH"
+          flutter --version
+
+      - name: Download project ZIP
         run: |
           mkdir -p /tmp/build
           curl -L "${{ inputs.zipUrl }}" -o /tmp/build/project.zip
           unzip -q /tmp/build/project.zip -d /tmp/build/project
 
-      - name: Locate Flutter Project
+      - name: Locate Flutter project
         run: |
           ROOT=$(find /tmp/build/project -name pubspec.yaml | head -n 1)
           if [ -z "$ROOT" ]; then
-            echo "pubspec.yaml not found in ZIP"
+            echo "pubspec.yaml not found"
             exit 1
           fi
           DIR=$(dirname "$ROOT")
           echo "FLUTTER_DIR=$DIR" >> $GITHUB_ENV
           echo "Flutter project dir: $DIR"
 
-      - name: Flutter Pub Get
+      - name: Flutter pub get
         run: |
+          export PATH="$HOME/flutter/flutter/bin:$PATH"
           cd "$FLUTTER_DIR"
           flutter pub get
 
       - name: Build APK
         run: |
+          export PATH="$HOME/flutter/flutter/bin:$PATH"
           cd "$FLUTTER_DIR"
           flutter build apk --release
 
-      - name: Zip APK Result
+      - name: Zip APK result
         run: |
           mkdir -p /tmp/build_result
-          cp "$FLUTTER_DIR/build/app/outputs/flutter-apk/app-release.apk" \
-             /tmp/build_result/app_${{ inputs.jobId }}.apk
+          cp "$FLUTTER_DIR/build/app/outputs/flutter-apk/app-release.apk" /tmp/build_result/app_${{ inputs.jobId }}.apk
           cd /tmp/build_result
           zip app_${{ inputs.jobId }}.zip app_${{ inputs.jobId }}.apk
 
@@ -70,7 +80,7 @@ jobs:
           git config user.email "actions@github.com"
           git remote set-url origin https://x-access-token:${GH_PAT}@github.com/Joodev65/Joomodss.id.git
           git add X/app_${{ inputs.jobId }}.zip
-          git commit -m "Add Flutter APK from ZIP job ${{ inputs.jobId }}" || true
+          git commit -m "Add Flutter APK job ${{ inputs.jobId }}" || true
           git push origin main
 
       - name: List APK
