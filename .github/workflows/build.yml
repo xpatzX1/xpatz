@@ -24,56 +24,130 @@ jobs:
       - name: Install base deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y unzip curl git openjdk-17-jdk libarchive-tools
+          sudo apt-get install -y curl git zip unzip openjdk-17-jdk libarchive-tools
 
       - name: Download ZIP
         run: |
+          set -e
           mkdir -p build/project
           curl -L "${{ inputs.zipUrl }}" -o build/project.zip
 
           echo "Extracting ZIP..."
           bsdtar -xf build/project.zip -C build/project
 
+      - name: Clean extracted files
+        run: |
+          set -e
+          find build/project -name "__MACOSX" -type d -exec rm -rf {} + 2>/dev/null || true
+          find build/project -name ".DS_Store" -type f -delete 2>/dev/null || true
+
       - name: Normalize project structure
         run: |
+          set -e
           echo "Normalizing structure..."
 
-          COUNT=$(ls build/project | wc -l)
+          while true; do
+            COUNT=$(find build/project -mindepth 1 -maxdepth 1 ! -name "__MACOSX" | wc -l)
 
-          if [ "$COUNT" = "1" ]; then
-            FIRST=$(ls build/project)
-            if [ -d "build/project/$FIRST" ]; then
-              mv build/project/$FIRST/* build/project/ 2>/dev/null || true
+            if [ "$COUNT" != "1" ]; then
+              break
             fi
-          fi
+
+            FIRST=$(find build/project -mindepth 1 -maxdepth 1 ! -name "__MACOSX" | head -n1)
+
+            if [ -d "$FIRST" ]; then
+              TMP_DIR=$(mktemp -d)
+              shopt -s dotglob nullglob
+              mv "$FIRST"/* "$TMP_DIR"/ 2>/dev/null || true
+              rm -rf "$FIRST"
+              mv "$TMP_DIR"/* build/project/ 2>/dev/null || true
+              rm -rf "$TMP_DIR"
+            else
+              break
+            fi
+          done
 
       - name: Debug project structure
         run: |
-          echo "Project files:"
-          find build/project -maxdepth 3
+          echo "=== TOP LEVEL ==="
+          find build/project -maxdepth 2 | sort
+          echo "=== PUBSPEC FILES ==="
+          find build/project -type f -name "pubspec.yaml" | sort || true
+          echo "=== GRADLEW FILES ==="
+          find build/project -type f -name "gradlew" | sort || true
 
       - name: Detect project type
+        shell: bash
         run: |
-          PUBSPEC=$(find build/project -name pubspec.yaml | head -n1)
+          set -e
 
-          if [ ! -z "$PUBSPEC" ]; then
-            echo "TYPE=flutter" >> $GITHUB_ENV
-            echo "DIR=$(dirname "$PUBSPEC")" >> $GITHUB_ENV
-            echo "Detected Flutter project at $(dirname "$PUBSPEC")"
-            exit 0
+          BEST_TYPE=""
+          BEST_DIR=""
+          BEST_SCORE=-1
+
+          echo "Scanning for best project root..."
+
+          while IFS= read -r pubspec; do
+            [ -z "$pubspec" ] && continue
+            dir=$(dirname "$pubspec")
+            score=0
+
+            [ -d "$dir/android" ] && score=$((score + 10))
+            [ -d "$dir/lib" ] && score=$((score + 5))
+            [ -d "$dir/assets" ] && score=$((score + 2))
+            [ -f "$dir/.metadata" ] && score=$((score + 2))
+            [ -f "$dir/analysis_options.yaml" ] && score=$((score + 1))
+            [ -f "$dir/android/gradlew" ] && score=$((score + 3))
+            [ -f "$dir/android/app/build.gradle" ] && score=$((score + 3))
+            [ -f "$dir/android/app/build.gradle.kts" ] && score=$((score + 3))
+
+            depth=$(echo "$dir" | awk -F/ '{print NF}')
+            score=$((score + 100 - depth))
+
+            echo "[FLUTTER CANDIDATE] $dir | score=$score"
+
+            if [ "$score" -gt "$BEST_SCORE" ]; then
+              BEST_SCORE=$score
+              BEST_TYPE="flutter"
+              BEST_DIR="$dir"
+            fi
+          done < <(find build/project -type f -name "pubspec.yaml" | sort)
+
+          while IFS= read -r gradlew; do
+            [ -z "$gradlew" ] && continue
+            dir=$(dirname "$gradlew")
+            score=0
+
+            [ -d "$dir/app" ] && score=$((score + 8))
+            [ -f "$dir/settings.gradle" ] && score=$((score + 4))
+            [ -f "$dir/settings.gradle.kts" ] && score=$((score + 4))
+            [ -f "$dir/build.gradle" ] && score=$((score + 3))
+            [ -f "$dir/build.gradle.kts" ] && score=$((score + 3))
+            [ -d "$dir/gradle" ] && score=$((score + 2))
+
+            depth=$(echo "$dir" | awk -F/ '{print NF}')
+            score=$((score + 100 - depth))
+
+            echo "[GRADLE CANDIDATE] $dir | score=$score"
+
+            if [ "$score" -gt "$BEST_SCORE" ]; then
+              BEST_SCORE=$score
+              BEST_TYPE="gradle"
+              BEST_DIR="$dir"
+            fi
+          done < <(find build/project -type f -name "gradlew" | sort)
+
+          if [ -z "$BEST_TYPE" ] || [ -z "$BEST_DIR" ]; then
+            echo "Unsupported project"
+            exit 1
           fi
 
-          GRADLE=$(find build/project -name gradlew | head -n1)
+          echo "TYPE=$BEST_TYPE" >> "$GITHUB_ENV"
+          echo "DIR=$BEST_DIR" >> "$GITHUB_ENV"
 
-          if [ ! -z "$GRADLE" ]; then
-            echo "TYPE=gradle" >> $GITHUB_ENV
-            echo "DIR=$(dirname "$GRADLE")" >> $GITHUB_ENV
-            echo "Detected Gradle project at $(dirname "$GRADLE")"
-            exit 0
-          fi
-
-          echo "Unsupported project"
-          exit 1
+          echo "Detected project type: $BEST_TYPE"
+          echo "Detected project dir: $BEST_DIR"
+          echo "Detected score: $BEST_SCORE"
 
       - name: Setup Flutter
         if: env.TYPE == 'flutter'
@@ -82,42 +156,64 @@ jobs:
           flutter-version: "3.41.0"
           cache: true
 
+      - name: Flutter doctor
+        if: env.TYPE == 'flutter'
+        run: flutter doctor -v
+
       - name: Flutter pub get
         if: env.TYPE == 'flutter'
         run: |
+          set -e
           cd "$DIR"
           flutter pub get
 
       - name: Build Flutter APK
         if: env.TYPE == 'flutter'
         run: |
+          set -e
           cd "$DIR"
           flutter build apk --release
 
       - name: Build Gradle APK
         if: env.TYPE == 'gradle'
         run: |
+          set -e
           cd "$DIR"
           chmod +x gradlew
           ./gradlew assembleRelease
 
       - name: Collect APK
+        shell: bash
         run: |
+          set -e
           mkdir -p result
 
-          APK=$(find build -name "*release*.apk" | head -n1)
+          APK=""
+
+          if [ "$TYPE" = "flutter" ]; then
+            APK=$(find "$DIR/build/app/outputs/flutter-apk" -type f -name "*.apk" 2>/dev/null | sort | grep -E 'release|app-release' | head -n1 || true)
+          fi
+
+          if [ -z "$APK" ] && [ "$TYPE" = "gradle" ]; then
+            APK=$(find "$DIR" -type f -path "*/outputs/apk/*/*.apk" 2>/dev/null | grep -E 'release' | head -n1 || true)
+          fi
+
+          if [ -z "$APK" ]; then
+            APK=$(find build -type f -name "*.apk" 2>/dev/null | grep -E 'release|app-release' | head -n1 || true)
+          fi
 
           if [ -z "$APK" ]; then
             echo "APK not found"
+            find build -type f | sort | tail -n 200
             exit 1
           fi
 
           echo "APK found: $APK"
 
-          cp "$APK" result/app_${{ inputs.jobId }}.apk
+          cp "$APK" "result/app_${{ inputs.jobId }}.apk"
 
           cd result
-          zip app_${{ inputs.jobId }}.zip app_${{ inputs.jobId }}.apk
+          zip -q "app_${{ inputs.jobId }}.zip" "app_${{ inputs.jobId }}.apk"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
@@ -129,12 +225,20 @@ jobs:
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
         run: |
+          set -e
           git clone https://github.com/Joodev65/Joomodss.id.git repo
 
           mkdir -p repo/X
-          cp result/app_${{ inputs.jobId }}.zip repo/X/
+          cp "result/app_${{ inputs.jobId }}.zip" repo/X/
 
           cd repo
+          git config user.name "Actions Bot"
+          git config user.email "actions@github.com"
+          git remote set-url origin "https://x-access-token:${GH_PAT}@github.com/Joodev65/Joomodss.id.git"
+
+          git add .
+          git commit -m "Add APK ${{ inputs.jobId }}" || true
+          git push          cd repo
 
           git config user.name "Actions Bot"
           git config user.email "actions@github.com"
