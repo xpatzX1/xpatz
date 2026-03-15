@@ -16,343 +16,223 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 45  # ⏱️ Timeout safety
 
     steps:
-      # ==========================================
-      # 1. CHECKOUT & BASE SETUP
-      # ==========================================
+
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Base Dependencies
+      - name: Install base dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            unzip curl git \
-            openjdk-17-jdk \
-            libarchive-tools \
-            imagemagick \
-            file \
-            tree
+            unzip curl git openjdk-17-jdk \
+            libarchive-tools imagemagick \
+            wget zip
 
-      # ==========================================
-      # 2. DOWNLOAD & EXTRACT PROJECT
-      # ==========================================
-      - name: Download ZIP
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Accept Android licenses
+        run: yes | sdkmanager --licenses
+
+      - name: Install Android build tools
+        run: |
+          sdkmanager \
+          "platform-tools" \
+          "platforms;android-34" \
+          "build-tools;34.0.0"
+
+      - name: Download ZIP (retry)
         run: |
           mkdir -p build/project
-          echo "Downloading from: ${{ inputs.zipUrl }}"
-          
-          # Retry logic untuk download yang sering failed
+
+          echo "Downloading project..."
+
           for i in 1 2 3; do
-            if curl -L --fail --max-time 300 "${{ inputs.zipUrl }}" -o build/project.zip; then
-              echo "✅ Download success on attempt $i"
-              break
-            fi
-            echo "⚠️ Download attempt $i failed, retrying..."
-            sleep 5
+            curl -L "${{ inputs.zipUrl }}" -o build/project.zip && break
+            echo "Retry download..."
+            sleep 3
           done
-          
-          if [ ! -f build/project.zip ]; then
-            echo "❌ Failed to download after 3 attempts"
-            exit 1
-          fi
 
-          echo "📦 Extracting ZIP..."
-          bsdtar -xf build/project.zip -C build/project || {
-            echo "⚠️ bsdtar failed, trying unzip..."
-            unzip -q build/project.zip -d build/project
-          }
+          echo "Extracting ZIP..."
+          bsdtar -xf build/project.zip -C build/project || unzip build/project.zip -d build/project
 
-      # ==========================================
-      # 3. NORMALIZE PROJECT STRUCTURE
-      # ==========================================
-      - name: Normalize Project Structure
+      - name: Normalize project structure
         run: |
-          echo "🔧 Normalizing structure..."
-          
-          # Handle nested folder (ZIP kadang extract ke subfolder)
-          COUNT=$(find build/project -mindepth 1 -maxdepth 1 -type d | wc -l)
-          FILES=$(find build/project -mindepth 1 -maxdepth 1 -type f | wc -l)
-          
-          echo "Found $COUNT directories and $FILES files in root"
-          
-          # Jika hanya 1 folder dan tidak ada file di root, flatten
-          if [ "$COUNT" = "1" ] && [ "$FILES" = "0" ]; then
-            FIRST=$(find build/project -mindepth 1 -maxdepth 1 -type d | head -n1)
-            echo "Flattening: $FIRST"
-            
-            # Move all content up
-            mv "$FIRST"/* build/project/ 2>/dev/null || true
-            mv "$FIRST"/.[!.]* build/project/ 2>/dev/null || true
-            rmdir "$FIRST" 2>/dev/null || true
-          fi
+          echo "Normalizing project structure..."
 
-      # ==========================================
-      # 4. DEBUG STRUCTURE
-      # ==========================================
-      - name: Debug Project Structure
-        run: |
-          echo "📁 Project structure:"
-          tree -L 3 build/project || find build/project -maxdepth 3 -type f | head -30
+          COUNT=$(find build/project -mindepth 1 -maxdepth 1 | wc -l)
 
-      # ==========================================
-      # 5. DETECT PROJECT TYPE & FLUTTER VERSION
-      # ==========================================
-      - name: Detect Project Type & Requirements
-        id: detect
-        run: |
-          # Cari pubspec.yaml
-          PUBSPEC=$(find build/project -name "pubspec.yaml" -not -path "*/.*" | head -n1)
-          
-          if [ -n "$PUBSPEC" ]; then
-            PROJECT_DIR=$(dirname "$PUBSPEC")
-            echo "✅ Flutter project detected at: $PROJECT_DIR"
-            
-            # 🔥 DETEKSI FLUTTER VERSION dari pubspec.yaml atau .flutter-version
-            FLUTTER_VERSION="stable"
-            
-            # Cek .flutter-version file
-            if [ -f "$PROJECT_DIR/.flutter-version" ]; then
-              FLUTTER_VERSION=$(cat "$PROJECT_DIR/.flutter-version" | tr -d '[:space:]')
-              echo "📌 Found .flutter-version: $FLUTTER_VERSION"
+          if [ "$COUNT" = "1" ]; then
+            FIRST=$(find build/project -mindepth 1 -maxdepth 1 | head -n1)
+
+            if [ -d "$FIRST" ]; then
+              mv "$FIRST"/* build/project/ 2>/dev/null || true
+              mv "$FIRST"/.[!.]* build/project/ 2>/dev/null || true
+              mv "$FIRST"/..?* build/project/ 2>/dev/null || true
             fi
-            
-            # Cek pubspec.yaml untuk sdk constraint
-            if [ -f "$PUBSPEC" ]; then
-              SDK_CONSTRAINT=$(grep -A 2 "sdk:" "$PUBSPEC" | grep "flutter" | sed 's/.*flutter: *//' | tr -d '"' | tr -d "'" | tr -d ' ')
-              if [ -n "$SDK_CONSTRAINT" ]; then
-                echo "📌 SDK constraint: $SDK_CONSTRAINT"
-                # Parse versi spesifik jika ada
-                if [[ "$SDK_CONSTRAINT" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-                  FLUTTER_VERSION="$SDK_CONSTRAINT"
-                fi
+          fi
+
+      - name: Debug project structure
+        run: |
+          echo "Project structure:"
+          find build/project -maxdepth 4
+
+      - name: Fix / Generate launcher icons
+        run: |
+          BASE="build/project/android/app/src/main/res"
+
+          echo "Fixing launcher icons..."
+
+          for d in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+
+            case $d in
+              mdpi) SIZE=48 ;;
+              hdpi) SIZE=72 ;;
+              xhdpi) SIZE=96 ;;
+              xxhdpi) SIZE=144 ;;
+              xxxhdpi) SIZE=192 ;;
+            esac
+
+            DIR="$BASE/mipmap-$d"
+            ICON="$DIR/ic_launcher.png"
+
+            mkdir -p "$DIR"
+
+            if [ -f "$ICON" ]; then
+              echo "Repairing existing icon $ICON"
+              convert "$ICON" -resize ${SIZE}x${SIZE} PNG32:"$ICON.fixed.png" 2>/dev/null || true
+
+              if [ -f "$ICON.fixed.png" ]; then
+                mv "$ICON.fixed.png" "$ICON"
+              else
+                echo "Icon corrupted, regenerating..."
+                convert -size ${SIZE}x${SIZE} xc:"#3DDC84" \
+                  -gravity center \
+                  -pointsize 24 \
+                  -fill white \
+                  -annotate 0 "A" \
+                  "$ICON"
               fi
+
+            else
+              echo "Creating new icon $ICON"
+              convert -size ${SIZE}x${SIZE} xc:"#3DDC84" \
+                -gravity center \
+                -pointsize 24 \
+                -fill white \
+                -annotate 0 "A" \
+                "$ICON"
             fi
-            
-            echo "type=flutter" >> $GITHUB_OUTPUT
-            echo "dir=$PROJECT_DIR" >> $GITHUB_OUTPUT
-            echo "flutter_version=$FLUTTER_VERSION" >> $GITHUB_OUTPUT
+
+          done
+
+      - name: Detect project type
+        run: |
+          PUBSPEC=$(find build/project -name pubspec.yaml | head -n1)
+
+          if [ ! -z "$PUBSPEC" ]; then
+            echo "TYPE=flutter" >> $GITHUB_ENV
+            echo "DIR=$(dirname "$PUBSPEC")" >> $GITHUB_ENV
+            echo "Detected Flutter project"
             exit 0
           fi
-          
-          # Cek Gradle project
-          GRADLE=$(find build/project -name "gradlew" -not -path "*/.*" | head -n1)
-          
-          if [ -n "$GRADLE" ]; then
-            PROJECT_DIR=$(dirname "$GRADLE")
-            echo "✅ Gradle project detected at: $PROJECT_DIR"
-            echo "type=gradle" >> $GITHUB_OUTPUT
-            echo "dir=$PROJECT_DIR" >> $GITHUB_OUTPUT
+
+          GRADLE=$(find build/project -name gradlew | head -n1)
+
+          if [ ! -z "$GRADLE" ]; then
+            echo "TYPE=gradle" >> $GITHUB_ENV
+            echo "DIR=$(dirname "$GRADLE")" >> $GITHUB_ENV
+            echo "Detected Gradle project"
             exit 0
           fi
-          
-          echo "❌ No supported project type found"
+
+          echo "Unsupported project"
           exit 1
 
-      # ==========================================
-      # 6. FIX COMMON FLUTTER ISSUES
-      # ==========================================
-      - name: Fix Common Flutter Issues
-        if: steps.detect.outputs.type == 'flutter'
-        run: |
-          PROJECT_DIR="${{ steps.detect.outputs.dir }}"
-          cd "$PROJECT_DIR"
-          
-          echo "🔧 Fixing common issues..."
-          
-          # Fix 1: Android SDK location
-          if [ ! -f "android/local.properties" ]; then
-            echo "sdk.dir=/usr/local/lib/android/sdk" > android/local.properties
-          fi
-          
-          # Fix 2: Gradle wrapper permissions
-          if [ -f "android/gradlew" ]; then
-            chmod +x android/gradlew
-          fi
-          
-          # Fix 3: Fix launcher icons (corrupted image handling)
-          echo "🖼️ Checking launcher icons..."
-          for d in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
-            ICON="android/app/src/main/res/mipmap-$d/ic_launcher.png"
-            if [ -f "$ICON" ]; then
-              # Cek apakah file valid PNG
-              if ! file "$ICON" | grep -q "PNG"; then
-                echo "⚠️ Invalid icon at $ICON, replacing..."
-                mkdir -p "android/app/src/main/res/mipmap-$d"
-                # Generate simple colored icon
-                convert -size 48x48 xc:blue "$ICON" 2>/dev/null || \
-                curl -sL "https://via.placeholder.com/48/0000FF/FFFFFF?text=App" -o "$ICON"
-              fi
-            else
-              # Create missing icon
-              mkdir -p "android/app/src/main/res/mipmap-$d"
-              SIZE=$(case $d in mdpi) echo 48;; hdpi) echo 72;; xhdpi) echo 96;; xxhdpi) echo 144;; xxxhdpi) echo 192;; esac)
-              convert -size ${SIZE}x${SIZE} xc:blue "$ICON" 2>/dev/null || \
-              curl -sL "https://via.placeholder.com/${SIZE}/0000FF/FFFFFF?text=A" -o "$ICON"
-            fi
-          done
-          
-          # Fix 4: Ensure android/app/build.gradle exists
-          if [ ! -f "android/app/build.gradle" ]; then
-            echo "❌ Missing android/app/build.gradle"
-            exit 1
-          fi
-          
-          # Fix 5: Check minSdkVersion compatibility
-          if grep -q "minSdkVersion.*16" android/app/build.gradle 2>/dev/null; then
-            echo "⚠️ Old minSdkVersion detected, updating to 21..."
-            sed -i 's/minSdkVersion.*/minSdkVersion 21/g' android/app/build.gradle
-          fi
-
-      # ==========================================
-      # 7. SETUP FLUTTER (Dynamic Version)
-      # ==========================================
       - name: Setup Flutter
-        if: steps.detect.outputs.type == 'flutter'
+        if: env.TYPE == 'flutter'
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: ${{ steps.detect.outputs.flutter_version }}
-          channel: 'stable'
+          flutter-version: "stable"
           cache: true
-          cache-key: 'flutter-${{ steps.detect.outputs.flutter_version }}'
 
-      # ==========================================
-      # 8. FLUTTER BUILD PROCESS
-      # ==========================================
-      - name: Flutter Pub Get
-        if: steps.detect.outputs.type == 'flutter'
+      - name: Flutter doctor
+        if: env.TYPE == 'flutter'
+        run: flutter doctor
+
+      - name: Flutter pub get (retry)
+        if: env.TYPE == 'flutter'
         run: |
-          cd "${{ steps.detect.outputs.dir }}"
-          flutter pub get || {
-            echo "⚠️ pub get failed, trying with --offline..."
-            flutter pub get --offline || true
-          }
+          cd "$DIR"
+
+          for i in 1 2 3; do
+            flutter pub get && break
+            echo "Retry pub get..."
+            sleep 3
+          done
 
       - name: Build Flutter APK
-        if: steps.detect.outputs.type == 'flutter'
+        if: env.TYPE == 'flutter'
         run: |
-          cd "${{ steps.detect.outputs.dir }}"
-          
-          # Pre-build cleanup
-          flutter clean
-          
-          # Build with verbose error reporting
-          echo "🏗️ Building Flutter APK..."
-          flutter build apk --release --verbose 2>&1 | tee build.log || {
-            echo "❌ Build failed, checking errors..."
-            
-            # Error handling spesifik
-            if grep -q "GradleException" build.log; then
-              echo "🔧 Gradle error detected, trying fix..."
-              cd android && ./gradlew clean && cd ..
-              flutter build apk --release
-            elif grep -q "Duplicate class" build.log; then
-              echo "🔧 Dependency conflict detected..."
-              flutter pub upgrade
-              flutter build apk --release
-            else
-              cat build.log
-              exit 1
-            fi
-          }
+          cd "$DIR"
 
-      # ==========================================
-      # 9. GRADLE BUILD PROCESS
-      # ==========================================
+          flutter build apk --release \
+          || flutter build apk --release --no-tree-shake-icons \
+          || flutter build apk --debug
+
       - name: Build Gradle APK
-        if: steps.detect.outputs.type == 'gradle'
+        if: env.TYPE == 'gradle'
         run: |
-          cd "${{ steps.detect.outputs.dir }}"
-          
-          # Setup Android SDK env
-          export ANDROID_HOME=/usr/local/lib/android/sdk
-          export PATH=$PATH:$ANDROID_HOME/tools:$ANDROID_HOME/platform-tools
-          
-          chmod +x gradlew
-          
-          echo "🏗️ Building with Gradle..."
-          ./gradlew assembleRelease --stacktrace || {
-            echo "⚠️ First build failed, trying clean build..."
-            ./gradlew clean
-            ./gradlew assembleRelease --stacktrace
-          }
+          cd "$DIR"
 
-      # ==========================================
-      # 10. COLLECT & PACKAGE APK
-      # ==========================================
+          chmod +x gradlew
+
+          ./gradlew assembleRelease \
+          || ./gradlew build \
+          || ./gradlew assembleDebug
+
       - name: Collect APK
         run: |
           mkdir -p result
-          
-          # Cari APK dengan multiple fallback patterns
-          APK=$(find build -name "*.apk" -type f \( -name "*release*" -o -name "*Release*" \) | grep -v "intermediates" | head -n1)
-          
-          # Fallback: cari APK apapun
+
+          APK=$(find build -type f -name "*.apk" | head -n1)
+
           if [ -z "$APK" ]; then
-            APK=$(find build -name "*.apk" -type f | grep -v "intermediates" | head -n1)
-          fi
-          
-          if [ -z "$APK" ]; then
-            echo "❌ No APK found!"
-            echo "📁 Available files in build:"
-            find build -type f | head -20
+            echo "APK not found"
             exit 1
           fi
-          
-          echo "✅ APK found: $APK"
-          ls -lh "$APK"
-          
-          # Copy dengan nama yang jelas
-          cp "$APK" "result/app_${{ inputs.jobId }}.apk"
-          
-          # Create ZIP
-          cd result
-          zip -9 "app_${{ inputs.jobId }}.zip" "app_${{ inputs.jobId }}.apk"
-          ls -lh
 
-      # ==========================================
-      # 11. UPLOAD ARTIFACT
-      # ==========================================
-      - name: Upload Artifact
+          echo "APK found: $APK"
+
+          cp "$APK" result/app_${{ inputs.jobId }}.apk
+
+          cd result
+          zip app_${{ inputs.jobId }}.zip app_${{ inputs.jobId }}.apk
+
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: apk_${{ inputs.jobId }}
           path: result/app_${{ inputs.jobId }}.zip
-          retention-days: 7
-          if-no-files-found: error
 
-      # ==========================================
-      # 12. PUSH TO REPO (Optional)
-      # ==========================================
-      - name: Push to Repo
-        if: success()  # Only push if build success
+      - name: Push to repo
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
         run: |
-          # Validasi secret
-          if [ -z "$GH_PAT" ]; then
-            echo "⚠️ GH_PAT not set, skipping push to repo"
-            exit 0
-          fi
-          
-          git clone --depth 1 https://github.com/Joodev65/Joomodss.id.git repo 2>/dev/null || {
-            echo "⚠️ Failed to clone repo, creating..."
-            mkdir -p repo
-          }
-          
+          git clone https://github.com/Joodev65/Joomodss.id.git repo
+
           mkdir -p repo/X
           cp result/app_${{ inputs.jobId }}.zip repo/X/
-          
+
           cd repo
-          
-          git config user.name "Universal Builder"
-          git config user.email "builder@github.com"
-          
-          # Setup remote dengan token
-          git remote set-url origin https://x-access-token:${GH_PAT}@github.com/Joodev65/Joomodss.id.git 2>/dev/null || true
-          
-          git add X/
-          git commit -m "📦 Build ${{ inputs.jobId }} - $(date '+%Y-%m-%d %H:%M')" || true
-          git push origin HEAD:main || git push origin HEAD:master || echo "⚠️ Push failed"
+
+          git config user.name "Actions Bot"
+          git config user.email "actions@github.com"
+
+          git remote set-url origin https://x-access-token:${GH_PAT}@github.com/Joodev65/Joomodss.id.git
+
+          git add .
+          git commit -m "Add APK ${{ inputs.jobId }}" || true
+          git push
