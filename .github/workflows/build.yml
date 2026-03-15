@@ -24,7 +24,7 @@ jobs:
       - name: Install base deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y unzip curl git openjdk-17-jdk libarchive-tools
+          sudo apt-get install -y unzip curl git openjdk-17-jdk libarchive-tools imagemagick
 
       - name: Download ZIP
         run: |
@@ -53,6 +53,30 @@ jobs:
         run: |
           echo "Project files:"
           find build/project -maxdepth 3
+
+      - name: Fix launcher icons
+        run: |
+          echo "Checking launcher icons..."
+
+          for d in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            ICON="build/project/android/app/src/main/res/mipmap-$d/ic_launcher.png"
+
+            if [ -f "$ICON" ]; then
+              echo "Checking $ICON"
+
+              file "$ICON"
+
+              convert "$ICON" PNG32:"$ICON.fixed.png" 2>/dev/null || true
+
+              if [ -f "$ICON.fixed.png" ]; then
+                mv "$ICON.fixed.png" "$ICON"
+                echo "Icon repaired"
+              else
+                echo "Replacing broken icon..."
+                curl -L https://raw.githubusercontent.com/flutter/flutter/master/dev/tools/androidx/assets/ic_launcher.png -o "$ICON"
+              fi
+            fi
+          done
 
       - name: Detect project type
         run: |
