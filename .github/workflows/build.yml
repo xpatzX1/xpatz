@@ -19,31 +19,41 @@ jobs:
 
     steps:
 
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install base dependencies
+
+      - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            unzip curl git openjdk-17-jdk \
-            libarchive-tools imagemagick \
-            wget zip
+            unzip \
+            curl \
+            git \
+            openjdk-17-jdk \
+            libarchive-tools \
+            imagemagick \
+            wget \
+            zip
+
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
+
       - name: Accept Android licenses
         run: yes | sdkmanager --licenses
 
-      - name: Install Android build tools
+
+      - name: Install Android components
         run: |
           sdkmanager \
-          "platform-tools" \
-          "platforms;android-34" \
-          "build-tools;34.0.0"
+            "platform-tools" \
+            "platforms;android-34" \
+            "build-tools;34.0.0"
 
-      - name: Download ZIP (retry)
+
+      - name: Download project ZIP
         run: |
           mkdir -p build/project
 
@@ -56,7 +66,9 @@ jobs:
           done
 
           echo "Extracting ZIP..."
+
           bsdtar -xf build/project.zip -C build/project || unzip build/project.zip -d build/project
+
 
       - name: Normalize project structure
         run: |
@@ -74,16 +86,16 @@ jobs:
             fi
           fi
 
-      - name: Debug project structure
+
+      - name: Debug project files
         run: |
           echo "Project structure:"
           find build/project -maxdepth 4
 
-      - name: Fix / Generate launcher icons
+
+      - name: Generate / repair launcher icons
         run: |
           BASE="build/project/android/app/src/main/res"
-
-          echo "Fixing launcher icons..."
 
           for d in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
 
@@ -101,23 +113,8 @@ jobs:
             mkdir -p "$DIR"
 
             if [ -f "$ICON" ]; then
-              echo "Repairing existing icon $ICON"
-              convert "$ICON" -resize ${SIZE}x${SIZE} PNG32:"$ICON.fixed.png" 2>/dev/null || true
-
-              if [ -f "$ICON.fixed.png" ]; then
-                mv "$ICON.fixed.png" "$ICON"
-              else
-                echo "Icon corrupted, regenerating..."
-                convert -size ${SIZE}x${SIZE} xc:"#3DDC84" \
-                  -gravity center \
-                  -pointsize 24 \
-                  -fill white \
-                  -annotate 0 "A" \
-                  "$ICON"
-              fi
-
+              convert "$ICON" -resize ${SIZE}x${SIZE} "$ICON" 2>/dev/null || true
             else
-              echo "Creating new icon $ICON"
               convert -size ${SIZE}x${SIZE} xc:"#3DDC84" \
                 -gravity center \
                 -pointsize 24 \
@@ -128,6 +125,7 @@ jobs:
 
           done
 
+
       - name: Detect project type
         run: |
           PUBSPEC=$(find build/project -name pubspec.yaml | head -n1)
@@ -135,7 +133,6 @@ jobs:
           if [ ! -z "$PUBSPEC" ]; then
             echo "TYPE=flutter" >> $GITHUB_ENV
             echo "DIR=$(dirname "$PUBSPEC")" >> $GITHUB_ENV
-            echo "Detected Flutter project"
             exit 0
           fi
 
@@ -144,34 +141,36 @@ jobs:
           if [ ! -z "$GRADLE" ]; then
             echo "TYPE=gradle" >> $GITHUB_ENV
             echo "DIR=$(dirname "$GRADLE")" >> $GITHUB_ENV
-            echo "Detected Gradle project"
             exit 0
           fi
 
           echo "Unsupported project"
           exit 1
 
+
       - name: Setup Flutter
         if: env.TYPE == 'flutter'
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: "stable"
+          flutter-version: "3.41.0"
           cache: true
+
 
       - name: Flutter doctor
         if: env.TYPE == 'flutter'
-        run: flutter doctor
+        run: flutter doctor -v
 
-      - name: Flutter pub get (retry)
+
+      - name: Install Flutter dependencies
         if: env.TYPE == 'flutter'
         run: |
           cd "$DIR"
 
           for i in 1 2 3; do
             flutter pub get && break
-            echo "Retry pub get..."
             sleep 3
           done
+
 
       - name: Build Flutter APK
         if: env.TYPE == 'flutter'
@@ -181,6 +180,7 @@ jobs:
           flutter build apk --release \
           || flutter build apk --release --no-tree-shake-icons \
           || flutter build apk --debug
+
 
       - name: Build Gradle APK
         if: env.TYPE == 'gradle'
@@ -192,6 +192,7 @@ jobs:
           ./gradlew assembleRelease \
           || ./gradlew build \
           || ./gradlew assembleDebug
+
 
       - name: Collect APK
         run: |
@@ -211,13 +212,15 @@ jobs:
           cd result
           zip app_${{ inputs.jobId }}.zip app_${{ inputs.jobId }}.apk
 
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: apk_${{ inputs.jobId }}
           path: result/app_${{ inputs.jobId }}.zip
 
-      - name: Push to repo
+
+      - name: Push APK to repo
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
         run: |
