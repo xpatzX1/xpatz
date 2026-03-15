@@ -16,402 +16,193 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
 
     steps:
+
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install ALL deps (including SVG/WebP support)
+      - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            unzip curl git openjdk-17-jdk libarchive-tools \
-            imagemagick tree file xxd \
-            librsvg2-bin webp
+          unzip curl git openjdk-17-jdk \
+          libarchive-tools imagemagick \
+          gradle
+
+      - name: Setup Gradle Cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
+
+      - name: Cache Flutter
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.pub-cache
+          key: flutter-${{ runner.os }}
 
       - name: Download ZIP
         run: |
           mkdir -p build/project
-          curl -L --max-time 120 --retry 3 "${{ inputs.zipUrl }}" -o build/project.zip
-          
-          echo "Extracting ZIP..."
-          bsdtar -xf build/project.zip -C build/project || unzip -q build/project.zip -d build/project
+
+          echo "Downloading project..."
+          curl -L --retry 5 --retry-delay 5 \
+          "${{ inputs.zipUrl }}" -o build/project.zip
+
+          echo "Extracting..."
+          bsdtar -xf build/project.zip -C build/project
 
       - name: Normalize project structure
         run: |
-          echo "Normalizing structure..."
-          
-          COUNT=$(find build/project -mindepth 1 -maxdepth 1 -type d | wc -l)
-          FILES=$(find build/project -mindepth 1 -maxdepth 1 -type f | wc -l)
-          
-          if [ "$COUNT" -eq 1 ] && [ "$FILES" -eq 0 ]; then
-            FIRST=$(find build/project -mindepth 1 -maxdepth 1 -type d | head -n1)
-            echo "Found nested folder: $FIRST"
-            mv "$FIRST"/* build/project/ 2>/dev/null || true
-            mv "$FIRST"/.[!.]* build/project/ 2>/dev/null || true
-            mv "$FIRST"/..?* build/project/ 2>/dev/null || true
-            rmdir "$FIRST" 2>/dev/null || true
+          COUNT=$(find build/project -mindepth 1 -maxdepth 1 | wc -l)
+
+          if [ "$COUNT" = "1" ]; then
+            FIRST=$(find build/project -mindepth 1 -maxdepth 1 | head -n1)
+
+            if [ -d "$FIRST" ]; then
+              mv "$FIRST"/* build/project/ 2>/dev/null || true
+              mv "$FIRST"/.[!.]* build/project/ 2>/dev/null || true
+              mv "$FIRST"/..?* build/project/ 2>/dev/null || true
+            fi
           fi
 
-      - name: Debug project structure
+      - name: Debug structure
         run: |
-          echo "=== Project Structure ==="
-          tree -L 3 build/project || find build/project -maxdepth 3 -type f | head -30
-          
-          echo "=== Looking for key files ==="
-          find build/project \( -name "pubspec.yaml" -o -name "gradlew" -o -name "build.gradle*" \) | head -10
-          
-          echo "=== Checking mipmap contents ==="
-          find build/project -path "*/mipmap-*" -type f 2>/dev/null | head -20 || echo "No mipmap files found"
+          echo "Files detected:"
+          find build/project -maxdepth 3
 
-      - name: UNIVERSAL Icon Fix (SVG/JPG/PNG/WEBP)
+      - name: Fix launcher icons
         run: |
-          echo "=== UNIVERSAL ICON CONVERTER ==="
-          
-          RES_DIR="build/project/android/app/src/main/res"
-          mkdir -p "$RES_DIR"
-          
-          # Download default Flutter icon
-          DEFAULT_ICON="/tmp/default_icon.png"
-          curl -sL -o "$DEFAULT_ICON" "https://raw.githubusercontent.com/flutter/flutter/master/dev/tools/androidx/assets/ic_launcher.png" 2>/dev/null || \
-          curl -sL -o "$DEFAULT_ICON" "https://raw.githubusercontent.com/flutter/flutter/stable/dev/tools/androidx/assets/ic_launcher.png" 2>/dev/null || \
-          convert -size 512x512 xc:#2196F3 "$DEFAULT_ICON"
-          
-          # Function: Check if file is valid PNG
-          is_valid_png() {
-            local file="$1"
-            [ ! -f "$file" ] && return 1
-            
-            # Check PNG signature
-            local sig=$(xxd -p -l 8 "$file" 2>/dev/null || echo "")
-            [ "$sig" != "89504e470d0a1a0a" ] && return 1
-            
-            # Check with file command
-            file "$file" | grep -qi "png" || return 1
-            
-            # Check with ImageMagick
-            identify "$file" >/dev/null 2>&1 || return 1
-            
-            return 0
-          }
-          
-          # Function: Detect file type and convert to PNG
-          convert_to_png() {
-            local input="$1"
-            local output="$2"
-            local size="$3"
-            
-            echo "Converting: $input -> $output (${size}x${size})"
-            
-            # Get extension
-            local ext="${input##*.}"
-            ext=$(echo "$ext" | tr '[:upper:]' '[:lower:]')
-            
-            case "$ext" in
-              svg)
-                # Convert SVG to PNG using librsvg
-                rsvg-convert -w "$size" -h "$size" -f png -o "$output" "$input" 2>/dev/null || \
-                convert "$input" -resize ${size}x${size} -background none -gravity center -extent ${size}x${size} "$output" 2>/dev/null || \
-                return 1
-                ;;
-                
-              jpg|jpeg)
-                # Convert JPG to PNG
-                convert "$input" -resize ${size}x${size}^ -gravity center -extent ${size}x${size} -strip PNG32:"$output" 2>/dev/null || \
-                return 1
-                ;;
-                
-              webp)
-                # Convert WebP to PNG
-                dwebp "$input" -o "$output" 2>/dev/null || \
-                convert "$input" -resize ${size}x${size}^ -gravity center -extent ${size}x${size} -strip PNG32:"$output" 2>/dev/null || \
-                return 1
-                ;;
-                
-              png)
-                # Re-encode PNG to ensure clean
-                if is_valid_png "$input"; then
-                  convert "$input" -resize ${size}x${size}^ -gravity center -extent ${size}x${size} -strip PNG32:"$output"
-                else
-                  return 1
-                fi
-                ;;
-                
-              *)
-                # Unknown format, try ImageMagick
-                convert "$input" -resize ${size}x${size}^ -gravity center -extent ${size}x${size} -strip PNG32:"$output" 2>/dev/null || \
-                return 1
-                ;;
-            esac
-            
-            # Verify output
-            is_valid_png "$output" || return 1
-            return 0
-          }
-          
-          # Function: Get best source icon from any density
-          find_best_source() {
-            local target_size="$1"
-            local best_source=""
-            local best_size_diff=99999
-            
-            for d in xxxhdpi xxhdpi xhdpi hdpi mdpi; do
-              local dir="$RES_DIR/mipmap-$d"
-              [ ! -d "$dir" ] && continue
-              
-              for f in "$dir"/*; do
-                [ ! -f "$f" ] && continue
-                local fname=$(basename "$f")
-                [[ "$fname" == ic_launcher* ]] || continue
-                
-                # Check if readable
-                if identify "$f" >/dev/null 2>&1; then
-                  local dims=$(identify -format "%w %h" "$f" 2>/dev/null || echo "0 0")
-                  local w=$(echo "$dims" | awk '{print $1}')
-                  local h=$(echo "$dims" | awk '{print $2}')
-                  local max_dim=$((w > h ? w : h))
-                  local diff=$((max_dim - target_size))
-                  [ $diff -lt 0 ] && diff=$((-diff))
-                  
-                  if [ $diff -lt $best_size_diff ]; then
-                    best_size_diff=$diff
-                    best_source="$f"
-                  fi
-                fi
-              done
-            done
-            
-            echo "$best_source"
-          }
-          
-          # Process each density
           for d in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
-            ICON_DIR="$RES_DIR/mipmap-$d"
-            mkdir -p "$ICON_DIR"
-            
-            # Target sizes for each density
-            case "$d" in
-              mdpi) SIZE=48 ;;
-              hdpi) SIZE=72 ;;
-              xhdpi) SIZE=96 ;;
-              xxhdpi) SIZE=144 ;;
-              xxxhdpi) SIZE=192 ;;
-            esac
-            
-            echo ""
-            echo "=== Processing mipmap-$d (${SIZE}x${SIZE}) ==="
-            
-            TARGET="$ICON_DIR/ic_launcher.png"
-            
-            # Step 1: Check if current PNG is valid
-            if is_valid_png "$TARGET"; then
-              echo "✓ Valid PNG exists: $TARGET"
-              convert "$TARGET" -strip PNG32:"$TARGET.tmp" && mv "$TARGET.tmp" "$TARGET"
-              continue
-            fi
-            
-            # Step 2: Find any ic_launcher file in this density
-            local source_file=""
-            for f in "$ICON_DIR"/ic_launcher*; do
-              [ -f "$f" ] && source_file="$f" && break
-            done
-            
-            # Step 3: If found, try to convert
-            if [ ! -z "$source_file" ]; then
-              echo "Found source: $source_file"
-              if convert_to_png "$source_file" "$TARGET" "$SIZE"; then
-                echo "✓ Converted successfully"
-                continue
+            ICON="build/project/android/app/src/main/res/mipmap-$d/ic_launcher.png"
+
+            if [ -f "$ICON" ]; then
+              convert "$ICON" PNG32:"$ICON.fixed.png" 2>/dev/null || true
+
+              if [ -f "$ICON.fixed.png" ]; then
+                mv "$ICON.fixed.png" "$ICON"
               else
-                echo "✗ Conversion failed, trying other sources..."
+                curl -L \
+                https://raw.githubusercontent.com/flutter/flutter/master/dev/tools/androidx/assets/ic_launcher.png \
+                -o "$ICON"
               fi
-            fi
-            
-            # Step 4: Find best source from other densities
-            local best_source=$(find_best_source "$SIZE")
-            if [ ! -z "$best_source" ]; then
-              echo "Using source from other density: $best_source"
-              if convert_to_png "$best_source" "$TARGET" "$SIZE"; then
-                echo "✓ Resized successfully"
-                continue
-              fi
-            fi
-            
-            # Step 5: Fallback to default icon
-            echo "Using default Flutter icon"
-            convert "$DEFAULT_ICON" -resize ${SIZE}x${SIZE} -strip PNG32:"$TARGET"
-            
-            if ! is_valid_png "$TARGET"; then
-              echo "CRITICAL: Failed to create valid icon for $d"
-              # Last resort: create solid color
-              convert -size ${SIZE}x${SIZE} xc:#2196F3 -strip PNG32:"$TARGET"
-            fi
-            
-            echo "✓ Created: $TARGET"
-          done
-          
-          echo ""
-          echo "=== Final verification ==="
-          for d in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
-            ICON="$RES_DIR/mipmap-$d/ic_launcher.png"
-            if is_valid_png "$ICON"; then
-              echo "✓ mipmap-$d: $(identify -format '%wx%h' "$ICON")"
-            else
-              echo "✗ mipmap-$d: INVALID!"
             fi
           done
 
-      - name: Detect project type and Flutter version
-        id: detect
+      - name: Detect project type
         run: |
-          PUBSPEC=$(find build/project -name pubspec.yaml -not -path "*/.*" | head -n1)
-          
+          PUBSPEC=$(find build/project -name pubspec.yaml | head -n1)
+
           if [ ! -z "$PUBSPEC" ]; then
             echo "TYPE=flutter" >> $GITHUB_ENV
             echo "DIR=$(dirname "$PUBSPEC")" >> $GITHUB_ENV
-            echo "Detected Flutter project at $(dirname "$PUBSPEC")"
-            
-            # Check for FVM
-            if [ -f "$(dirname "$PUBSPEC")/.fvm/fvm_config.json" ]; then
-              FVM_VERSION=$(cat "$(dirname "$PUBSPEC")/.fvm/fvm_config.json" | grep -o '"flutterSdkVersion": "[^"]*"' | cut -d'"' -f4)
-              if [ ! -z "$FVM_VERSION" ]; then
-                echo "FVM_VERSION=$FVM_VERSION" >> $GITHUB_ENV
-                echo "FVM version detected: $FVM_VERSION"
-              fi
-            fi
-            
             exit 0
           fi
 
-          GRADLE=$(find build/project -name gradlew -not -path "*/.*" | head -n1)
-          
+          GRADLE=$(find build/project -name gradlew | head -n1)
+
           if [ ! -z "$GRADLE" ]; then
             echo "TYPE=gradle" >> $GITHUB_ENV
             echo "DIR=$(dirname "$GRADLE")" >> $GITHUB_ENV
-            echo "Detected Gradle project at $(dirname "$GRADLE")"
             exit 0
           fi
 
-          echo "::error::No Flutter or Gradle project detected"
+          echo "Unsupported project"
           exit 1
-
-      - name: Setup Java 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '17'
-          cache: 'gradle'
 
       - name: Setup Flutter
         if: env.TYPE == 'flutter'
         uses: subosito/flutter-action@v2
         with:
-          channel: 'stable'
+          channel: stable
           cache: true
-          flutter-version: ${{ env.FVM_VERSION || '' }}
 
-      - name: Verify environment
+      - name: Accept Android licenses
         if: env.TYPE == 'flutter'
-        run: |
-          flutter --version
-          java -version
+        run: yes | flutter doctor --android-licenses
 
-      - name: Fix common Flutter issues
+      - name: Flutter dependencies
         if: env.TYPE == 'flutter'
         run: |
           cd "$DIR"
-          
-          if [ ! -d "android" ]; then
-            echo "::error::Android directory not found"
-            exit 1
-          fi
-          
-          if [ -f "android/gradlew" ]; then
-            chmod +x android/gradlew
-          fi
-          
-          if [ ! -f "android/local.properties" ]; then
-            echo "sdk.dir=$ANDROID_SDK_ROOT" > android/local.properties 2>/dev/null || true
-          fi
+          flutter pub get || flutter pub get || flutter pub get
 
-      - name: Flutter pub get
-        if: env.TYPE == 'flutter'
+      - name: Ensure Gradle Wrapper
+        if: env.TYPE == 'gradle'
         run: |
           cd "$DIR"
-          flutter pub get || (flutter clean && flutter pub get)
+
+          if [ ! -f gradlew ]; then
+            echo "Gradle wrapper missing, generating..."
+            gradle wrapper
+          fi
+
+          chmod +x gradlew
 
       - name: Build Flutter APK
         if: env.TYPE == 'flutter'
         run: |
           cd "$DIR"
-          
-          # Build with multiple fallback strategies
-          flutter build apk --release || \
-          flutter build apk --release --no-shrink || \
-          flutter build apk --release --no-shrink --split-debug-info=build/symbols || \
-          (echo "::error::All build strategies failed" && exit 1)
 
-      - name: Setup Android SDK for Gradle
-        if: env.TYPE == 'gradle'
-        uses: android-actions/setup-android@v3
+          flutter build apk --release \
+          || flutter clean && flutter pub get && flutter build apk --release
 
       - name: Build Gradle APK
         if: env.TYPE == 'gradle'
         run: |
           cd "$DIR"
-          chmod +x gradlew
-          
-          ./gradlew assembleRelease --no-daemon --stacktrace || \
-          ./gradlew assembleRelease --no-daemon
+
+          ./gradlew assembleRelease \
+          --no-daemon \
+          --parallel \
+          --build-cache \
+          || ./gradlew clean assembleRelease --no-daemon
 
       - name: Collect APK
         run: |
           mkdir -p result
-          
-          # Search multiple locations
-          APK=$(find build -name "*.apk" -path "*release*" ! -path "*intermediates*" ! -path "*unaligned*" | head -n1)
-          
+
+          APK=$(find build -name "*release*.apk" | head -n1)
+
           if [ -z "$APK" ]; then
-            APK=$(find "$DIR" -name "*.apk" -path "*release*" ! -path "*intermediates*" ! -path "*unaligned*" | head -n1)
-          fi
-          
-          if [ -z "$APK" ]; then
-            echo "::error::APK not found. All APKs:"
-            find build "$DIR" -name "*.apk" 2>/dev/null || echo "No APKs found"
+            echo "APK not found"
             exit 1
           fi
-          
-          echo "APK found: $APK"
-          ls -lh "$APK"
-          
-          cp "$APK" "result/app_${{ inputs.jobId }}.apk"
-          
+
+          cp "$APK" result/app_${{ inputs.jobId }}.apk
+
           cd result
-          zip -j "app_${{ inputs.jobId }}.zip" "app_${{ inputs.jobId }}.apk"
+          zip app_${{ inputs.jobId }}.zip app_${{ inputs.jobId }}.apk
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: apk_${{ inputs.jobId }}
           path: result/app_${{ inputs.jobId }}.zip
-          retention-days: 7
 
       - name: Push to Repo
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
         run: |
-          git config --global user.name "Actions Bot"
-          git config --global user.email "actions@github.com"
-          
-          git clone --depth 1 "https://x-access-token:${GH_PAT}@github.com/Joodev65/Joomodss.id.git" repo 2>/dev/null || \
-          (echo "::error::Failed to clone repo" && exit 1)
-          
+          git clone https://github.com/Joodev65/Joomodss.id.git repo
+
           mkdir -p repo/X
-          cp "result/app_${{ inputs.jobId }}.zip" repo/X/
-          
+          cp result/app_${{ inputs.jobId }}.zip repo/X/
+
           cd repo
-          
-          git add X/
-          git commit -m "Add APK ${{ inputs.jobId }} - $(date +%Y%m%d_%H%M%S)" || true
-          git push origin HEAD || (echo "::warning::Push failed" && exit 0)
+
+          git config user.name "Actions Bot"
+          git config user.email "actions@github.com"
+
+          git remote set-url origin \
+          https://x-access-token:${GH_PAT}@github.com/Joodev65/Joomodss.id.git
+
+          git add .
+          git commit -m "Add APK ${{ inputs.jobId }}" || true
+          git push
