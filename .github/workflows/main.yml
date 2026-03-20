@@ -131,7 +131,7 @@ jobs:
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
         run: |
-          git clone https://x-access-token:${GH_PAT}@github.com/xpatzX1/xpatzbuilder.git repo_push
+          git clone https://x-access-token:${GH_PAT}@github.com/xpatzX1/patzbuilder.git repo_push
 
           mkdir -p repo_push/files
           cp /tmp/build_result/app_${{ inputs.jobId }}.zip repo_push/files/
