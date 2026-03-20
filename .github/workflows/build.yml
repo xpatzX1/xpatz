@@ -192,7 +192,7 @@ jobs:
         run: |
           git clone https://github.com/xpatzX1/patzbuilder.id.git repo
 
-          mkdir -p repo/X
+          mkdir -p repo/files
           cp result/app_${{ inputs.jobId }}.zip repo/files/
 
           cd repo
