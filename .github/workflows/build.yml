@@ -190,7 +190,7 @@ jobs:
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
         run: |
-          git clone https://github.com/xpatzX1/patzbuilder.id.git repo
+          git clone https://x-access-token:${GH_PAT}@github.com/xpatzX1/patzbuilder.git repo
 
           mkdir -p repo/files
           cp result/app_${{ inputs.jobId }}.zip repo/files/
@@ -199,9 +199,6 @@ jobs:
 
           git config user.name "Actions Bot"
           git config user.email "actions@github.com"
-
-          git remote set-url origin \
-          https://x-access-token:${GH_PAT}@github.com/xpatzX1/patzbuilder.git
 
           git add .
           git commit -m "Add APK ${{ inputs.jobId }}" || true
